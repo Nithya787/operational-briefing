@@ -1,0 +1,13 @@
+# API keys — never commit
+.env
+
+# Metabase CSV exports — can be hundreds of MB
+*.csv
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
