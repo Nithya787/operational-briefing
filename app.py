@@ -1090,7 +1090,7 @@ Data:
 def call_claude(prompt, max_tokens=3000):
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     message = client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}]
     )
@@ -1539,7 +1539,7 @@ api_systemeventalert.csv · api_deposit.csv · api_olynsservice.csv · api_csddr
                 st.error(f"Something went wrong: {e}")
                 st.exception(e)
 
-    if st.session_state.get("metrics") is not None:
+    if st.session_state.get("metrics") is not None and st.session_state.get("briefing_text") is not None:
         if st.session_state.get("demo_mode"):
             st.info("🎬 **Demo mode** — sample data only. Upload your own CSV files and click Generate Briefing to see a real briefing.")
         st.divider()
