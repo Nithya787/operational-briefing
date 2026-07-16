@@ -1162,32 +1162,32 @@ def render_briefing(metrics, briefing_text, snapshots):
     with fc1:
         if "cube_full_longest" in flags:
             f = flags["cube_full_longest"]
-            st.markdown(flag_card("⏳ Cube Full Longest", f["value"], f["location"] + " · " + f["sub"], "red"),
+            st.markdown(flag_card("⏳ Cube Full Longest", f["value"], str(f.get("location", "—")) + " · " + str(f.get("sub", "")), "red"),
                         unsafe_allow_html=True)
     with fc2:
         if "cube_maint_longest" in flags:
             f = flags["cube_maint_longest"]
-            st.markdown(flag_card("🔧 In Maintenance Longest", f["value"], f["location"] + " · " + f["sub"], "orange"),
+            st.markdown(flag_card("🔧 In Maintenance Longest", f["value"], str(f.get("location", "—")) + " · " + str(f.get("sub", "")), "orange"),
                         unsafe_allow_html=True)
     with fc3:
         if "top_deposit_cube" in flags:
             f = flags["top_deposit_cube"]
-            st.markdown(flag_card("♻️ Top Cube by Deposits", f["value"], f["location"] + " · " + f["sub"], "green"),
+            st.markdown(flag_card("♻️ Top Cube by Deposits", f["value"], str(f.get("location", "—")) + " · " + str(f.get("sub", "")), "green"),
                         unsafe_allow_html=True)
     with fc4:
         if "busiest_cube" in flags:
             f = flags["busiest_cube"]
-            st.markdown(flag_card("👥 Busiest Cube by Users", f["value"], f["location"] + " · " + f["sub"], "green"),
+            st.markdown(flag_card("👥 Busiest Cube by Users", f["value"], str(f.get("location", "—")) + " · " + str(f.get("sub", "")), "green"),
                         unsafe_allow_html=True)
     with fc5:
         if "max_csd_location" in flags:
             f = flags["max_csd_location"]
-            st.markdown(flag_card("📦 Max CSD Location", f["value"], f["location"] + " · " + f["sub"], "blue"),
+            st.markdown(flag_card("📦 Max CSD Location", f["value"], str(f.get("location", "—")) + " · " + str(f.get("sub", "")), "blue"),
                         unsafe_allow_html=True)
     with fc6:
         if "csd_maint_flag" in flags:
             f = flags["csd_maint_flag"]
-            st.markdown(flag_card("⚠️ CSD + Maint Overlap", f["value"], f["location"] + " · " + f["sub"], "orange"),
+            st.markdown(flag_card("⚠️ CSD + Maint Overlap", f["value"], str(f.get("location", "—")) + " · " + str(f.get("sub", "")), "orange"),
                         unsafe_allow_html=True)
 
     st.write("")
