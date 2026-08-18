@@ -374,7 +374,7 @@ DEMO_SNAPSHOTS = [
 ]
 
 # ── Tabs ────────────────────────────────────────────────────────
-tab1, tab2 = st.tabs(["📊 Generate Briefing", "📈 Trend Analysis"])
+tab1, tab2, tab3 = st.tabs(["📊 Generate Briefing", "📈 Trend Analysis", "🧪 Briefing Eval"])
 
 # ── Data processing ────────────────────────────────────────────
 def process_data(uploads):
@@ -1086,6 +1086,66 @@ Data:
 {chr(10).join(lines)}
 """
 
+# ── Eval Judge ─────────────────────────────────────────────────
+EVAL_JUDGE_PROMPT = """You are evaluating an Olyns Operational Briefing. Judge its quality against a pass/fail rubric. Be strict — if a criterion is not clearly met, mark it FAIL.
+
+CONTEXT
+
+Olyns operates a network of AI-powered recycling kiosks called Cubes, placed inside grocery stores. Consumers deposit cans and bottles for CRV refunds. Gig workers called Sherpas are dispatched to service cubes when they fill up. The briefing goes to two audiences:
+- CEO: Cares about user growth, deposit volume, and whether the numbers support expansion conversations with grocery store chains.
+- Ops team: Cares about which specific cubes need maintenance, Sherpa performance and coverage gaps, CSD bag overflow, and any patterns requiring escalation.
+
+PRIOR SNAPSHOT AVAILABLE: {prior_snapshot}
+
+BRIEFING TO EVALUATE:
+
+{briefing_text}
+
+---
+
+Output only valid JSON in this exact structure, with no text before or after:
+{
+  "check_1a": {"verdict": "PASS or FAIL", "critique": "one to two sentences quoting or referencing specific briefing text"},
+  "check_1b": {"verdict": "PASS or FAIL", "critique": "one to two sentences quoting or referencing specific briefing text"},
+  "check_2":  {"verdict": "PASS or FAIL", "critique": "one to two sentences quoting or referencing specific briefing text"},
+  "check_3":  {"verdict": "PASS or FAIL", "critique": "one to two sentences quoting or referencing specific briefing text"},
+  "overall":  {"verdict": "PASS or FAIL", "primary_failure": "which check failed and one sentence on the core gap, or null if PASS"}
+}
+
+CHECK DEFINITIONS:
+
+CHECK 1A — CEO Growth Narrative
+If prior snapshot available: PASS requires total deposits and unique users compared to prior period with directional signal (e.g. "up 12% from last month"). FAIL if only absolute numbers given with no comparison.
+If no prior snapshot: PASS requires total deposits and unique users clearly and prominently stated, with location-level context on where volume is concentrated. FAIL if these headline numbers are missing or buried.
+
+CHECK 1B — Ops Specificity
+PASS: Every ops section (Cube Performance, Maintenance Alerts, Service Response Time, Provider Performance, CSD Bag Pickups) names specific cube names, exact counts, operator IDs, and failure modes. Ops can act without going back to raw data.
+FAIL: Any section uses vague language like "several sites," "some operators," or "certain cubes" without naming them specifically.
+
+CHECK 2 — Cross-Signal Synthesis
+PASS: At least one observation explicitly connects signals from two or more different sections (e.g. highest-volume location is also most maintenance-troubled, with commentary on what that tension means for the business).
+FAIL: Every section is a standalone summary. No section references data or patterns from another section.
+
+CHECK 3 — Escalation Flag
+PASS: At least one fleet-level or systemic signal is explicitly called out as requiring escalation beyond routine ops — engineering involvement, leadership attention, or a vendor/grocery chain conversation (e.g. a failure type across 10+ distinct cubes, Sherpa bench depth critically low across a zone).
+FAIL: All flagged issues are framed as per-cube fixes. Nothing is elevated to fleet-level or identified as needing a stakeholder beyond the ops team.
+
+OVERALL: PASS only if all 4 checks pass. FAIL if any check fails."""
+
+
+def run_eval_judge(briefing_text, prior_snapshot):
+    prompt = EVAL_JUDGE_PROMPT.replace("{prior_snapshot}", "yes" if prior_snapshot else "no")
+    prompt = prompt.replace("{briefing_text}", briefing_text)
+    raw = call_claude(prompt, max_tokens=1500)
+    # strip markdown code fences if model adds them
+    if "```" in raw:
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else raw
+        if raw.startswith("json"):
+            raw = raw[4:].strip()
+    return json.loads(raw.strip())
+
+
 # ── Call Claude ────────────────────────────────────────────────
 def call_claude(prompt, max_tokens=3000):
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -1694,3 +1754,132 @@ You need <strong>at least 2 snapshots</strong> to see the comparison table. Uplo
             st.caption("Analysis already generated — results below. Refresh the page to re-run.")
         if st.session_state.get("snap_only_trend"):
             st.markdown(st.session_state.snap_only_trend)
+
+# ── Tab 3: Briefing Eval ──────────────────────────────────────────
+with tab3:
+    st.markdown("## 🧪 Briefing Quality Eval")
+    st.markdown("""
+<div class="upload-note">
+📌 <strong>How this works:</strong> Download a briefing as text (the <strong>Download Briefing as Text</strong> button at the bottom of the Generate Briefing tab). Collect one file per week. Upload them all here and click <strong>Run Eval</strong> — the LLM judge will score each one on 4 criteria and show you where it passes or fails.<br><br>
+<strong>Tip:</strong> If you ran a briefing with a prior snapshot loaded, add <code>-snapshot</code> to the filename (e.g. <code>2026-07-08-briefing-snapshot.txt</code>) so Check 1A is evaluated correctly.
+</div>
+""", unsafe_allow_html=True)
+
+    st.write("")
+    eval_files = st.file_uploader(
+        "Upload briefing .txt files (one per week)",
+        type=["txt"],
+        accept_multiple_files=True,
+        key="eval_upload"
+    )
+
+    if eval_files:
+        file_info = []
+        for f in eval_files:
+            has_snap = "snapshot" in f.name.lower()
+            file_info.append({"name": f.name, "has_snapshot": has_snap, "file": f})
+
+        snap_count = sum(1 for fi in file_info if fi["has_snapshot"])
+        st.caption(f"{len(file_info)} file(s) uploaded · {snap_count} with prior snapshot · {len(file_info) - snap_count} without")
+
+        run_eval_btn = st.button("▶ Run Eval", type="primary", key="run_eval_btn")
+
+        if run_eval_btn:
+            st.session_state.pop("eval_results", None)
+            results = []
+            prog    = st.progress(0)
+            status  = st.empty()
+
+            for i, fi in enumerate(file_info):
+                status.text(f"Scoring {fi['name']} ({i + 1}/{len(file_info)})...")
+                briefing_text = fi["file"].read().decode("utf-8")
+                try:
+                    scores = run_eval_judge(briefing_text, fi["has_snapshot"])
+                    results.append({
+                        "File":            fi["name"],
+                        "Snapshot":        "yes" if fi["has_snapshot"] else "no",
+                        "Check 1A":        scores.get("check_1a", {}).get("verdict", "ERROR"),
+                        "1A Note":         scores.get("check_1a", {}).get("critique", ""),
+                        "Check 1B":        scores.get("check_1b", {}).get("verdict", "ERROR"),
+                        "1B Note":         scores.get("check_1b", {}).get("critique", ""),
+                        "Check 2":         scores.get("check_2",  {}).get("verdict", "ERROR"),
+                        "2 Note":          scores.get("check_2",  {}).get("critique", ""),
+                        "Check 3":         scores.get("check_3",  {}).get("verdict", "ERROR"),
+                        "3 Note":          scores.get("check_3",  {}).get("critique", ""),
+                        "Overall":         scores.get("overall",  {}).get("verdict", "ERROR"),
+                        "Primary Failure": scores.get("overall",  {}).get("primary_failure") or "",
+                    })
+                except Exception as e:
+                    results.append({
+                        "File": fi["name"], "Snapshot": "yes" if fi["has_snapshot"] else "no",
+                        "Check 1A": "ERROR", "1A Note": str(e),
+                        "Check 1B": "",      "1B Note": "",
+                        "Check 2":  "",      "2 Note":  "",
+                        "Check 3":  "",      "3 Note":  "",
+                        "Overall":  "ERROR", "Primary Failure": str(e),
+                    })
+                prog.progress((i + 1) / len(file_info))
+
+            status.empty()
+            prog.empty()
+            st.session_state.eval_results = results
+            st.rerun()
+
+    if st.session_state.get("eval_results"):
+        results = st.session_state.eval_results
+        df      = pd.DataFrame(results)
+        valid   = [r for r in results if r["Overall"] in ("PASS", "FAIL")]
+
+        # ── Summary metrics ───────────────────────────────────────
+        if valid:
+            st.markdown("### Summary")
+            cols = st.columns(5)
+            pass_total = sum(1 for r in valid if r["Overall"] == "PASS")
+            cols[0].metric("Overall Pass Rate", f"{pass_total}/{len(valid)}")
+            for idx, (col_key, label) in enumerate([
+                ("Check 1A", "1A — CEO Growth"),
+                ("Check 1B", "1B — Ops Specificity"),
+                ("Check 2",  "2 — Cross-Signal"),
+                ("Check 3",  "3 — Escalation"),
+            ]):
+                c_pass = sum(1 for r in valid if r.get(col_key) == "PASS")
+                cols[idx + 1].metric(label, f"{c_pass}/{len(valid)}")
+
+        # ── Results table (verdicts only) ─────────────────────────
+        st.markdown("### Verdicts")
+        verdict_cols = ["File", "Snapshot", "Check 1A", "Check 1B", "Check 2", "Check 3", "Overall"]
+        st.dataframe(
+            df[[c for c in verdict_cols if c in df.columns]],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # ── Detail per briefing ───────────────────────────────────
+        st.markdown("### Detail by Briefing")
+        for r in results:
+            icon = "✅" if r["Overall"] == "PASS" else "❌"
+            with st.expander(f"{icon} {r['File']}  —  Overall: {r['Overall']}"):
+                for check_key, note_key, label in [
+                    ("Check 1A", "1A Note", "CEO Growth Narrative"),
+                    ("Check 1B", "1B Note", "Ops Specificity"),
+                    ("Check 2",  "2 Note",  "Cross-Signal Synthesis"),
+                    ("Check 3",  "3 Note",  "Escalation Flag"),
+                ]:
+                    v = r.get(check_key, "")
+                    v_icon = "✅" if v == "PASS" else ("❌" if v == "FAIL" else "⚠️")
+                    st.markdown(f"**{v_icon} {check_key} — {label}:** {v}")
+                    note = r.get(note_key, "")
+                    if note:
+                        st.caption(note)
+                if r.get("Primary Failure"):
+                    st.warning(f"Primary failure reason: {r['Primary Failure']}")
+
+        # ── Download ──────────────────────────────────────────────
+        st.divider()
+        st.download_button(
+            "📥 Download Results as CSV",
+            data=df.to_csv(index=False),
+            file_name="briefing-eval-results.csv",
+            mime="text/csv",
+            key="download_eval_csv"
+        )
